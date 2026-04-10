@@ -1,0 +1,6 @@
+/target
+.env
+*.swp
+*.swo
+*~
+raw_responses/

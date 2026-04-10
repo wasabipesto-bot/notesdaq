@@ -1,0 +1,15 @@
+services:
+  db:
+    image: timescale/timescaledb:latest-pg17
+    environment:
+      POSTGRES_PASSWORD: notesdaq
+      POSTGRES_USER: notesdaq
+      POSTGRES_DB: notesdaq
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/home/postgres/pgdata/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
