@@ -84,9 +84,13 @@ async fn main() -> Result<()> {
             continue;
         };
 
-        info!("Crawling blog: {blog_slug} ({target_uuid})");
-        notesdaq_db::queries::update_crawl_status(&pool, &target_uuid, "in_progress", 0, None, None)
-            .await?;
+        let existing_progress =
+            notesdaq_db::queries::get_crawl_progress(&pool, &target_uuid).await?;
+        info!("Crawling blog: {blog_slug} ({target_uuid}), resuming from {existing_progress} posts");
+        notesdaq_db::queries::update_crawl_status(
+            &pool, &target_uuid, "in_progress", existing_progress, None, None,
+        )
+        .await?;
 
         match crawl_blog(&pool, &client, &blog_slug, &target_uuid).await {
             Ok(posts_fetched) => {
@@ -131,9 +135,11 @@ async fn crawl_blog(
     info!("[{blog_slug}] Phase 1: Fetching posts (resuming from {resume_from})...");
     let mut offset = resume_from as u32;
     let mut posts_fetched: i32 = resume_from;
-    let mut root_post_ids: Vec<i64> = Vec::new();
+    // Map root_post_id → query_post_id. query_post_id is a post owned by this blog
+    // that we can use in the notes API call (the endpoint requires blog/post_id to match).
+    let mut notes_targets: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
 
-    // Collect root post IDs from already-fetched posts too
+    // Seed from already-fetched posts
     let existing_roots: Vec<(Option<i64>, i64)> = sqlx::query_as(
         "SELECT root_post_id, post_id FROM posts WHERE blog_uuid = $1",
     )
@@ -141,10 +147,8 @@ async fn crawl_blog(
     .fetch_all(pool)
     .await?;
     for (root_id, post_id) in &existing_roots {
-        let id = root_id.unwrap_or(*post_id);
-        if !root_post_ids.contains(&id) {
-            root_post_ids.push(id);
-        }
+        let root = root_id.unwrap_or(*post_id);
+        notes_targets.entry(root).or_insert(*post_id);
     }
 
     loop {
@@ -234,12 +238,9 @@ async fn crawl_blog(
             .await?;
 
             // Track root posts that need notes enumeration.
-            // If this IS a root post (no root_post_id), it's a root itself.
-            // If it's a reblog, the root is the one that needs enumeration.
+            // Map root_post_id → this blog's own post_id (for querying the notes API).
             let root_id = root_post_id.unwrap_or(post_id);
-            if !root_post_ids.contains(&root_id) {
-                root_post_ids.push(root_id);
-            }
+            notes_targets.entry(root_id).or_insert(post_id);
 
             posts_fetched += 1;
         }
@@ -260,14 +261,14 @@ async fn crawl_blog(
 
     info!(
         "[{blog_slug}] Phase 1 complete: {posts_fetched} posts, {} unique root posts to enumerate",
-        root_post_ids.len()
+        notes_targets.len()
     );
 
     // Phase 2: Enumerate notes for each root post
     info!("[{blog_slug}] Phase 2: Enumerating notes for root posts...");
-    let total_roots = root_post_ids.len();
+    let total_roots = notes_targets.len();
 
-    for (i, root_id) in root_post_ids.iter().enumerate() {
+    for (i, (&root_id, &query_post_id)) in notes_targets.iter().enumerate() {
         // Check if already fully enumerated
         let already_done: Option<(bool,)> = sqlx::query_as(
             "SELECT notes_fully_enumerated FROM posts WHERE post_id = $1",
@@ -281,9 +282,9 @@ async fn crawl_blog(
             continue;
         }
 
-        info!("[{blog_slug}] Enumerating notes for root post {root_id} ({}/{total_roots})...", i + 1);
+        info!("[{blog_slug}] Enumerating notes for root post {root_id} via query post {query_post_id} ({}/{total_roots})...", i + 1);
 
-        match enumerate_notes(pool, client, blog_slug, *root_id).await {
+        match enumerate_notes(pool, client, blog_slug, query_post_id, root_id).await {
             Ok(count) => {
                 info!("[{blog_slug}] Root post {root_id}: {count} reblog events recorded");
             }
@@ -298,10 +299,13 @@ async fn crawl_blog(
 }
 
 /// Enumerate all notes for a root post, assign share prices, store reblog events and likes.
+/// `query_post_id` is the post ID to use in the API call (must be owned by `query_blog_slug`).
+/// `root_post_id` is the root of the reblog chain (used for DB storage).
 async fn enumerate_notes(
     pool: &sqlx::PgPool,
     client: &tumblr::TumblrClient,
-    blog_slug: &str,
+    query_blog_slug: &str,
+    query_post_id: i64,
     root_post_id: i64,
 ) -> Result<i64> {
     // Check if we have a resume point
@@ -322,7 +326,7 @@ async fn enumerate_notes(
 
     loop {
         let data = client
-            .get_notes(blog_slug, root_post_id, before_timestamp)
+            .get_notes(query_blog_slug, query_post_id, before_timestamp)
             .await;
 
         let data = match data {
@@ -333,9 +337,9 @@ async fn enumerate_notes(
                 if pages == 0 {
                     let root_slug = try_root_blog_slug(pool, root_post_id).await?;
                     if let Some(slug) = root_slug {
-                        if slug != blog_slug {
-                            info!("Retrying notes for {root_post_id} via root blog: {slug}");
-                            return enumerate_notes_via(pool, client, &slug, root_post_id).await;
+                        if slug != query_blog_slug {
+                            info!("Retrying notes for root post {root_post_id} via root blog: {slug}");
+                            return enumerate_notes_via(pool, client, &slug, root_post_id, root_post_id).await;
                         }
                     }
                 }
@@ -528,10 +532,11 @@ async fn enumerate_notes(
 fn enumerate_notes_via<'a>(
     pool: &'a sqlx::PgPool,
     client: &'a tumblr::TumblrClient,
-    blog_slug: &'a str,
+    query_blog_slug: &'a str,
+    query_post_id: i64,
     root_post_id: i64,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<i64>> + 'a>> {
-    Box::pin(enumerate_notes(pool, client, blog_slug, root_post_id))
+    Box::pin(enumerate_notes(pool, client, query_blog_slug, query_post_id, root_post_id))
 }
 
 /// Try to find the root blog's slug from our database.
