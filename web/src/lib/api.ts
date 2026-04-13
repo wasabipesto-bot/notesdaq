@@ -1,7 +1,4 @@
-const API_BASE =
-  (typeof window !== "undefined" && (window as any).__API_BASE) ||
-  import.meta.env.PUBLIC_API_BASE ||
-  "http://localhost:3001/api/v1";
+const API_BASE = import.meta.env.PUBLIC_API_BASE || "/api/v1";
 
 export async function api<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);

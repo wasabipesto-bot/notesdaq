@@ -5,7 +5,6 @@ interface Props {
 }
 
 const { title, description = "Every reblog is an investment. How's your portfolio?" } = Astro.props;
-const API_BASE = import.meta.env.PUBLIC_API_BASE || "http://localhost:3001/api/v1";
 ---
 
 <!doctype html>
@@ -39,9 +38,6 @@ const API_BASE = import.meta.env.PUBLIC_API_BASE || "http://localhost:3001/api/v
     <p>notesdaq &mdash; a virtual stock market for Tumblr reblogs</p>
   </footer>
 
-  <script define:vars={{ API_BASE }}>
-    window.__API_BASE = API_BASE;
-  </script>
 </body>
 </html>
 

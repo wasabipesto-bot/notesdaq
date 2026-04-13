@@ -6,4 +6,11 @@ import node from '@astrojs/node';
 export default defineConfig({
   output: 'static',
   adapter: node({ mode: 'standalone' }),
+  vite: {
+    server: {
+      proxy: {
+        '/api': 'http://localhost:3001',
+      },
+    },
+  },
 });
