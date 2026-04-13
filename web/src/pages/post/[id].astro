@@ -57,7 +57,8 @@ const { id } = Astro.params;
       contentHtml = `<div class="post-content"><p>${post.summary}</p></div>`;
     }
     if (!contentHtml) {
-      contentHtml = `<div class="post-content"><p style="color:var(--text-dim)">No content available. <a href="${post.post_url || `https://tumblr.com`}" target="_blank">View on Tumblr</a></p></div>`;
+      const tumblrLink = post.post_url || (opSlug ? `https://${opSlug}.tumblr.com/post/${postId}` : post.reblog_url || null);
+      contentHtml = `<div class="post-content"><p style="color:var(--text-dim)">No content available.${tumblrLink ? ` <a href="${tumblrLink}" target="_blank">View on Tumblr</a>` : ""}</p></div>`;
     }
 
     container.innerHTML = `
@@ -69,7 +70,7 @@ const { id } = Astro.params;
           </h1>
           <div class="stock-meta">
             Created ${new Date(post.created_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
-            ${post.post_url ? `&middot; <a href="${post.post_url}" target="_blank">View on Tumblr</a>` : ""}
+            ${(post.post_url || opSlug || post.reblog_url) ? `&middot; <a href="${post.post_url || (opSlug ? `https://${opSlug}.tumblr.com/post/${postId}` : post.reblog_url)}" target="_blank">View on Tumblr</a>` : ""}
           </div>
         </div>
       </div>
@@ -101,7 +102,7 @@ const { id } = Astro.params;
       </div>
 
       ${contentHtml ? `
-        <div class="card">
+        <div class="card content-card">
           <div class="stat-label">Post Content</div>
           ${contentHtml}
         </div>
@@ -113,7 +114,7 @@ const { id } = Astro.params;
 
   async function loadPriceChart(postId: string) {
     try {
-      const points = await api<{ t: string; price: number }[]>(`/post/${postId}/chart`);
+      const points = await api<{ t: string; price: number; investor: string | null }[]>(`/post/${postId}/chart`);
       const canvas = document.getElementById("price-chart") as HTMLCanvasElement;
       if (points.length < 2) {
         canvas.style.display = "none";
@@ -124,18 +125,32 @@ const { id } = Astro.params;
         type: "line",
         data: {
           datasets: [{
-            data: points.map(p => ({ x: new Date(p.t).getTime(), y: p.price })),
+            data: points.map(p => ({ x: new Date(p.t).getTime(), y: p.price, investor: p.investor } as any)),
             borderColor: "#00b894",
             backgroundColor: "rgba(0, 184, 148, 0.08)",
             fill: true,
-            pointRadius: 0,
+            pointRadius: 3,
+            pointHoverRadius: 6,
             borderWidth: 2,
-            tension: 0.3,
+            stepped: "before",
           }],
         },
         options: {
           responsive: true,
-          plugins: { legend: { display: false } },
+          interaction: { mode: "nearest", intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: (items: any[]) => new Date(items[0].parsed.x).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+                label: (item: any) => {
+                  const investor = item.raw?.investor;
+                  const price = `Price: ${item.parsed.y.toLocaleString()} reblogs`;
+                  return investor && investor !== "unknown" ? [price, `Reblogged by ${investor}`] : price;
+                },
+              },
+            },
+          },
           scales: {
             x: { type: "time", grid: { color: "#2a2a3a" }, ticks: { color: "#8888a0", font: { size: 10 } } },
             y: { title: { display: true, text: "Reblogs", color: "#8888a0" }, grid: { color: "#2a2a3a" }, ticks: { color: "#8888a0", font: { size: 10 } } },
@@ -148,7 +163,7 @@ const { id } = Astro.params;
   load();
 </script>
 
-<style>
+<style is:global>
   .stock-header {
     display: flex;
     align-items: center;
@@ -187,16 +202,20 @@ const { id } = Astro.params;
     font-size: 0.875rem;
   }
 
+  .content-card { overflow: hidden; }
   .post-content {
     margin-top: 1rem;
     line-height: 1.6;
     color: var(--text);
+    overflow-wrap: break-word;
   }
   .post-content p { margin-bottom: 0.75rem; }
   .post-media {
     max-width: 100%;
+    height: auto;
     border-radius: 8px;
     margin-top: 0.75rem;
+    display: block;
   }
   .post-media-link {
     display: block;

@@ -13,13 +13,13 @@ import Base from "../layouts/Base.astro";
   </section>
 
   <section class="stats-bar" id="stats-bar">
-    <div class="loading">Loading stats...</div>
+    <div class="loading deferred">Loading stats...</div>
   </section>
 
   <section class="ticker-section">
     <h2 class="section-title">Recent Trades</h2>
     <div id="ticker" class="ticker-wrap">
-      <div class="loading">Loading ticker...</div>
+      <div class="loading deferred">Loading ticker...</div>
     </div>
   </section>
 </Base>
@@ -64,15 +64,24 @@ import Base from "../layouts/Base.astro";
         el.innerHTML = '<div style="color:var(--text-dim);padding:1rem">No trades recorded yet.</div>';
         return;
       }
-      el.innerHTML = events.map(e => `
-        <div class="ticker-item">
-          <a href="/blog/${e.investor_slug}" class="ticker-investor">${e.investor_slug}</a>
-          bought
-          <a href="/post/${e.post_id}" class="ticker-post">${e.op_slug || "unknown"}'s post</a>
-          at price <span class="ticker-price">${formatNumber(e.buy_price)}</span>
-          <span class="ticker-time">${relativeTime(e.reblogged_at)}</span>
-        </div>
-      `).join("");
+      // Shuffle for variety (Fisher-Yates)
+      for (let i = events.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [events[i], events[j]] = [events[j], events[i]];
+      }
+      const items = events
+        .filter((e: any) => e.op_slug && e.op_slug !== "unknown")
+        .map((e: any) => `
+          <div class="ticker-item">
+            <a href="/blog/${e.investor_slug}" class="ticker-investor">${e.investor_slug}</a>
+            <span class="ticker-verb">bought</span>
+            <a href="/post/${e.post_id}" class="ticker-post">${e.op_slug}</a>
+            <span class="ticker-verb">at</span>
+            <span class="ticker-price">${formatNumber(e.buy_price)} reblogs</span>
+          </div>
+        `).join("");
+      // Duplicate items for seamless infinite scroll
+      el.innerHTML = `<div class="ticker-track">${items}${items}</div>`;
     } catch {
       document.getElementById("ticker")!.innerHTML =
         '<div style="color:var(--text-dim);padding:1rem">Ticker unavailable</div>';
@@ -83,7 +92,7 @@ import Base from "../layouts/Base.astro";
   loadTicker();
 </script>
 
-<style>
+<style is:global>
   .hero {
     text-align: center;
     padding: 4rem 1rem 3rem;
@@ -134,6 +143,9 @@ import Base from "../layouts/Base.astro";
   }
   .hero-search button:hover { opacity: 0.9; }
 
+  .deferred { opacity: 0; animation: fade-in 0.3s ease 0.4s forwards; }
+  @keyframes fade-in { to { opacity: 1; } }
+
   .stats-bar { margin-bottom: 2rem; }
 
   .ticker-section { margin-bottom: 2rem; }
@@ -141,31 +153,59 @@ import Base from "../layouts/Base.astro";
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 10px;
-    max-height: 400px;
-    overflow-y: auto;
+    overflow: hidden;
+    position: relative;
+  }
+  .ticker-wrap::before,
+  .ticker-wrap::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2rem;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .ticker-wrap::before {
+    left: 0;
+    background: linear-gradient(to right, var(--bg-card), transparent);
+  }
+  .ticker-wrap::after {
+    right: 0;
+    background: linear-gradient(to left, var(--bg-card), transparent);
+  }
+
+  .ticker-track {
+    display: flex;
+    gap: 0;
+    animation: ticker-scroll 90s linear infinite;
+    width: max-content;
+  }
+  .ticker-track:hover { animation-play-state: paused; }
+
+  @keyframes ticker-scroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
   }
 
   .ticker-item {
-    padding: 0.6rem 1rem;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.875rem;
+    padding: 0.6rem 1.25rem;
+    font-size: 0.8rem;
     color: var(--text-dim);
     display: flex;
     align-items: center;
-    gap: 0.35rem;
-    flex-wrap: wrap;
+    gap: 0.3rem;
+    white-space: nowrap;
+    border-right: 1px solid var(--border);
   }
-  .ticker-item:last-child { border-bottom: none; }
   .ticker-investor { font-weight: 600; }
+  .ticker-verb { color: var(--text-dim); }
+  .ticker-post { }
+  .ticker-at { color: var(--text-dim); }
   .ticker-price {
     font-family: var(--mono);
     color: var(--text);
     font-weight: 600;
-  }
-  .ticker-time {
-    margin-left: auto;
-    font-size: 0.75rem;
-    white-space: nowrap;
   }
 
   @media (max-width: 640px) {

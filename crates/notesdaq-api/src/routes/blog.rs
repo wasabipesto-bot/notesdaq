@@ -92,7 +92,7 @@ pub struct PositionsQuery {
     per_page: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct ChartPoint {
     t: chrono::DateTime<chrono::Utc>,
     value: i64,
@@ -350,31 +350,85 @@ async fn get_portfolio_chart(
     let pool = &state.pool;
     let blog_uuid = resolve_slug(pool, &slug).await?;
 
-    // Portfolio value over time: for each snapshot timestamp, sum the reblog_count
-    // of all posts this blog holds a position in.
-    // This gives us portfolio value at each point where any held stock got a new snapshot.
-    let points = sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, i64)>(
+    // Portfolio P&L over time using LOCF (last observation carried forward).
+    // For each held post, P&L = current_price - buy_price. We track current_price
+    // via reblog events and snapshots, and subtract the buy price (this blog's entry).
+    //
+    // Step 1: get this blog's buy prices (their reblog event per post)
+    let buy_prices = sqlx::query_as::<_, (i64, i64, chrono::DateTime<chrono::Utc>)>(
         r#"
-        WITH held_posts AS (
-            SELECT DISTINCT post_id FROM reblog_events WHERE blog_uuid = $1
-        )
-        SELECT
-            s.snapshotted_at as t,
-            sum(s.reblog_count) as value
-        FROM reblog_count_snapshots s
-        WHERE s.post_id IN (SELECT post_id FROM held_posts)
-        GROUP BY s.snapshotted_at
-        ORDER BY s.snapshotted_at
+        SELECT post_id, reblog_count_at_time, reblogged_at
+        FROM reblog_events
+        WHERE blog_uuid = $1
         "#,
     )
     .bind(&blog_uuid)
     .fetch_all(pool)
     .await?;
 
-    let chart: Vec<ChartPoint> = points
-        .into_iter()
-        .map(|r| ChartPoint { t: r.0, value: r.1 })
-        .collect();
+    use std::collections::HashMap;
+    let buy_price_map: HashMap<i64, i64> = buy_prices.iter().map(|r| (r.0, r.1)).collect();
+    let buy_time_map: HashMap<i64, chrono::DateTime<chrono::Utc>> = buy_prices.iter().map(|r| (r.0, r.2)).collect();
+
+    // Step 2: get the full price timeline for all held posts
+    let events = sqlx::query_as::<_, (i64, chrono::DateTime<chrono::Utc>, i64)>(
+        r#"
+        WITH held_posts AS (
+            SELECT DISTINCT post_id FROM reblog_events WHERE blog_uuid = $1
+        )
+        SELECT post_id, ts, price FROM (
+            SELECT post_id, reblogged_at AS ts, reblog_count_at_time AS price
+            FROM reblog_events
+            WHERE post_id IN (SELECT post_id FROM held_posts)
+            UNION ALL
+            SELECT post_id, snapshotted_at AS ts, reblog_count AS price
+            FROM reblog_count_snapshots
+            WHERE post_id IN (SELECT post_id FROM held_posts)
+        ) combined
+        ORDER BY ts
+        "#,
+    )
+    .bind(&blog_uuid)
+    .fetch_all(pool)
+    .await?;
+
+    // Step 3: LOCF — track latest price per post, but only count a post's P&L
+    // after the blog actually acquired it (reblogged_at).
+    let mut latest_price: HashMap<i64, i64> = HashMap::new();
+    let mut chart: Vec<ChartPoint> = Vec::new();
+    let mut last_ts: Option<chrono::DateTime<chrono::Utc>> = None;
+
+    for (post_id, ts, price) in &events {
+        latest_price.insert(*post_id, *price);
+
+        if last_ts.map_or(true, |prev| prev != *ts) {
+            // Sum P&L for all positions acquired on or before this timestamp
+            let total_pnl: i64 = latest_price.iter()
+                .filter(|(pid, _)| buy_time_map.get(pid).map_or(false, |bt| bt <= ts))
+                .map(|(pid, cur)| cur - buy_price_map.get(pid).unwrap_or(&0))
+                .sum();
+            chart.push(ChartPoint { t: *ts, value: total_pnl });
+            last_ts = Some(*ts);
+        } else if let Some(last) = chart.last_mut() {
+            let total_pnl: i64 = latest_price.iter()
+                .filter(|(pid, _)| buy_time_map.get(pid).map_or(false, |bt| bt <= ts))
+                .map(|(pid, cur)| cur - buy_price_map.get(pid).unwrap_or(&0))
+                .sum();
+            last.value = total_pnl;
+        }
+    }
+
+    // Downsample if too many points (keep ~500 for chart readability)
+    if chart.len() > 500 {
+        let step = chart.len() / 500;
+        let mut sampled: Vec<ChartPoint> = chart.iter().step_by(step).cloned().collect();
+        if let Some(last) = chart.last() {
+            if sampled.last().map_or(true, |s| s.t != last.t) {
+                sampled.push(last.clone());
+            }
+        }
+        chart = sampled;
+    }
 
     Ok(Json(chart))
 }

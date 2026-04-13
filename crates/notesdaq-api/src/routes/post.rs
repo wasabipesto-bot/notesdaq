@@ -22,6 +22,7 @@ struct PostDetail {
     content_media: Vec<String>,
     trail_npf: Option<serde_json::Value>,
     post_url: Option<String>,
+    reblog_url: Option<String>,
     tags: Vec<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     note_count: i64,
@@ -54,6 +55,7 @@ struct PostResponse {
 struct PricePoint {
     t: chrono::DateTime<chrono::Utc>,
     price: i64,
+    investor: Option<String>,
 }
 
 async fn get_post(
@@ -62,11 +64,13 @@ async fn get_post(
 ) -> Result<Json<PostResponse>, ApiError> {
     let pool = &state.pool;
 
-    let row = sqlx::query_as::<_, (
+    type PostRow = (
         i64, Option<String>, Option<String>, Vec<String>, Option<serde_json::Value>,
         Option<String>, Vec<String>, chrono::DateTime<chrono::Utc>, i64,
         String, bool,
-    )>(
+    );
+
+    let row: PostRow = sqlx::query_as(
         r#"
         SELECT
             p.post_id, p.summary, p.content_text, p.content_media, p.trail_npf,
@@ -81,26 +85,61 @@ async fn get_post(
     .await?
     .ok_or_else(|| ApiError::NotFound("Post not found".into()))?;
 
+    let blog_uuid = row.9.clone();
+    let fully_enumerated = row.10;
+
+    // If this is a placeholder root post (no content), try to find a reblog with content
+    let (summary, content_text, content_media, trail_npf, post_url, tags) =
+        if row.2.is_none() && row.5.is_none() && row.1.is_none() {
+            // Look for a reblog of this post that has content
+            let fallback: Option<(Option<String>, Option<String>, Vec<String>, Option<serde_json::Value>, Option<String>, Vec<String>)> =
+                sqlx::query_as(
+                    r#"
+                    SELECT p.summary, p.content_text, p.content_media, p.trail_npf, p.post_url, p.tags
+                    FROM posts p
+                    WHERE p.root_post_id = $1 AND p.content_text IS NOT NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(post_id)
+                .fetch_optional(pool)
+                .await?;
+            fallback.unwrap_or((row.1, row.2, row.3.clone(), row.4.clone(), row.5.clone(), row.6.clone()))
+        } else {
+            (row.1, row.2, row.3.clone(), row.4.clone(), row.5.clone(), row.6.clone())
+        };
+
+    // If this post has no URL and OP is unknown, find a reblog URL as fallback
+    let reblog_url = if post_url.is_none() {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT post_url FROM posts WHERE root_post_id = $1 AND post_url IS NOT NULL LIMIT 1",
+        )
+        .bind(post_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten()
+    } else {
+        None
+    };
+
     let post = PostDetail {
         post_id: row.0.to_string(),
-        summary: row.1,
-        content_text: row.2,
-        content_media: row.3.clone(),
-        trail_npf: row.4.clone(),
-        post_url: row.5.clone(),
-        tags: row.6.clone(),
+        summary,
+        content_text,
+        content_media,
+        trail_npf,
+        post_url,
+        reblog_url,
+        tags,
         created_at: row.7,
         note_count: row.8,
     };
-
-    let blog_uuid = &row.9;
-    let fully_enumerated = row.10;
 
     // OP blog info
     let op = sqlx::query_as::<_, (String, Option<String>, String)>(
         "SELECT slug, avatar_url, uuid FROM blogs WHERE uuid = $1",
     )
-    .bind(blog_uuid)
+    .bind(&blog_uuid)
     .fetch_optional(pool)
     .await?
     .map(|b| BlogRef {
@@ -179,12 +218,13 @@ async fn get_price_chart(
 
     // Use reblog_events as price points — each reblog IS a price change.
     // This gives exact resolution without needing periodic snapshots.
-    let points = sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, i64)>(
+    let points = sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, i64, Option<String>)>(
         r#"
-        SELECT reblogged_at, reblog_count_at_time
-        FROM reblog_events
-        WHERE post_id = $1 AND NOT is_op_position
-        ORDER BY reblog_count_at_time ASC
+        SELECT re.reblogged_at, re.reblog_count_at_time, b.slug
+        FROM reblog_events re
+        LEFT JOIN blogs b ON b.uuid = re.blog_uuid
+        WHERE re.post_id = $1 AND NOT re.is_op_position
+        ORDER BY re.reblog_count_at_time ASC
         "#,
     )
     .bind(root_id)
@@ -193,7 +233,7 @@ async fn get_price_chart(
 
     let chart: Vec<PricePoint> = points
         .into_iter()
-        .map(|r| PricePoint { t: r.0, price: r.1 })
+        .map(|r| PricePoint { t: r.0, price: r.1, investor: r.2 })
         .collect();
 
     Ok(Json(chart))
