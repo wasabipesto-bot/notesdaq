@@ -1,0 +1,177 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="notesdaq — the Tumblr stock market">
+  <section class="hero">
+    <h1>Every reblog is an investment.</h1>
+    <p class="hero-sub">notesdaq tracks the Tumblr reblog economy. Look up any blog and see how their reblogs performed as stocks.</p>
+    <form class="hero-search" action="/blog" method="get">
+      <input type="text" name="q" placeholder="Enter a Tumblr blog name..." autofocus autocomplete="off" />
+      <button type="submit">View Portfolio</button>
+    </form>
+  </section>
+
+  <section class="stats-bar" id="stats-bar">
+    <div class="loading">Loading stats...</div>
+  </section>
+
+  <section class="ticker-section">
+    <h2 class="section-title">Recent Trades</h2>
+    <div id="ticker" class="ticker-wrap">
+      <div class="loading">Loading ticker...</div>
+    </div>
+  </section>
+</Base>
+
+<script>
+  import { api, formatNumber, relativeTime } from "../lib/api";
+
+  async function loadStats() {
+    try {
+      const stats = await api<any>("/stats");
+      document.getElementById("stats-bar")!.innerHTML = `
+        <div class="card-grid">
+          <div class="card">
+            <div class="stat-label">Investments Tracked</div>
+            <div class="stat-value">${formatNumber(stats.total_reblog_events)}</div>
+          </div>
+          <div class="card">
+            <div class="stat-label">Blogs Discovered</div>
+            <div class="stat-value">${formatNumber(stats.total_blogs)}</div>
+          </div>
+          <div class="card">
+            <div class="stat-label">Posts Analyzed</div>
+            <div class="stat-value">${formatNumber(stats.posts_enumerated)}</div>
+          </div>
+          <div class="card">
+            <div class="stat-label">Likes Recorded</div>
+            <div class="stat-value">${formatNumber(stats.total_likes)}</div>
+          </div>
+        </div>
+      `;
+    } catch {
+      document.getElementById("stats-bar")!.innerHTML =
+        '<div class="card" style="text-align:center;color:var(--text-dim)">Stats unavailable</div>';
+    }
+  }
+
+  async function loadTicker() {
+    try {
+      const events = await api<any[]>("/ticker?limit=20");
+      const el = document.getElementById("ticker")!;
+      if (events.length === 0) {
+        el.innerHTML = '<div style="color:var(--text-dim);padding:1rem">No trades recorded yet.</div>';
+        return;
+      }
+      el.innerHTML = events.map(e => `
+        <div class="ticker-item">
+          <a href="/blog/${e.investor_slug}" class="ticker-investor">${e.investor_slug}</a>
+          bought
+          <a href="/post/${e.post_id}" class="ticker-post">${e.op_slug || "unknown"}'s post</a>
+          at price <span class="ticker-price">${formatNumber(e.buy_price)}</span>
+          <span class="ticker-time">${relativeTime(e.reblogged_at)}</span>
+        </div>
+      `).join("");
+    } catch {
+      document.getElementById("ticker")!.innerHTML =
+        '<div style="color:var(--text-dim);padding:1rem">Ticker unavailable</div>';
+    }
+  }
+
+  loadStats();
+  loadTicker();
+</script>
+
+<style>
+  .hero {
+    text-align: center;
+    padding: 4rem 1rem 3rem;
+  }
+  .hero h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+    background: linear-gradient(135deg, var(--accent), var(--green));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero-sub {
+    color: var(--text-dim);
+    font-size: 1.1rem;
+    max-width: 500px;
+    margin: 0 auto 2rem;
+    line-height: 1.5;
+  }
+  .hero-search {
+    display: flex;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .hero-search input {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px 0 0 8px;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 1rem;
+    outline: none;
+  }
+  .hero-search input:focus { border-color: var(--accent); }
+  .hero-search button {
+    padding: 0.75rem 1.5rem;
+    background: var(--accent);
+    border: none;
+    border-radius: 0 8px 8px 0;
+    color: white;
+    font-family: var(--font);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .hero-search button:hover { opacity: 0.9; }
+
+  .stats-bar { margin-bottom: 2rem; }
+
+  .ticker-section { margin-bottom: 2rem; }
+  .ticker-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .ticker-item {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.875rem;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .ticker-item:last-child { border-bottom: none; }
+  .ticker-investor { font-weight: 600; }
+  .ticker-price {
+    font-family: var(--mono);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .ticker-time {
+    margin-left: auto;
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 1.75rem; }
+    .hero-search { flex-direction: column; }
+    .hero-search input { border-radius: 8px; margin-bottom: 0.5rem; }
+    .hero-search button { border-radius: 8px; }
+  }
+</style>

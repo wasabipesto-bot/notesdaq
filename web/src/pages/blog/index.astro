@@ -1,0 +1,21 @@
+---
+export const prerender = false;
+import Base from "../../layouts/Base.astro";
+// Redirect /blog?q=foo to /blog/foo
+const q = Astro.url.searchParams.get("q")?.trim();
+if (q) {
+  return Astro.redirect(`/blog/${q}`);
+}
+---
+
+<Base title="Search — notesdaq">
+  <div style="text-align:center;padding:4rem 1rem;">
+    <h2>Enter a blog name to view their portfolio</h2>
+    <form class="hero-search" action="/blog" method="get" style="max-width:480px;margin:2rem auto;display:flex;">
+      <input type="text" name="q" placeholder="Blog name..." autofocus autocomplete="off"
+        style="flex:1;padding:0.75rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:8px 0 0 8px;color:var(--text);font-family:var(--font);font-size:1rem;outline:none;" />
+      <button type="submit"
+        style="padding:0.75rem 1.5rem;background:var(--accent);border:none;border-radius:0 8px 8px 0;color:white;font-family:var(--font);font-size:1rem;font-weight:600;cursor:pointer;">Go</button>
+    </form>
+  </div>
+</Base>

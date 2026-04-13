@@ -1,0 +1,77 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="About — notesdaq">
+  <div class="about">
+    <h1>How notesdaq works</h1>
+
+    <div class="card" style="margin-bottom:1.5rem;">
+      <h2>The concept</h2>
+      <p>
+        Every reblog on Tumblr is retroactively treated as a stock purchase. When you reblog a post, your "buy price"
+        is the number of reblogs that post had at that moment. As the post continues to spread, your investment grows.
+      </p>
+      <p>
+        If you reblogged a post when it had 10 reblogs and it now has 1,000, your multiplier is 100x.
+        If you were the original poster, your buy price is 0 &mdash; infinite return.
+      </p>
+    </div>
+
+    <div class="card" style="margin-bottom:1.5rem;">
+      <h2>Scoring</h2>
+      <ul>
+        <li><strong>Share price</strong> = total number of reblogs on the root post</li>
+        <li><strong>Buy price</strong> = the share price at the moment of your reblog</li>
+        <li><strong>Multiplier</strong> = current price / buy price</li>
+        <li><strong>Portfolio value</strong> = sum of current prices across all your positions</li>
+        <li>OP gets a synthetic position at price 0 (displayed as +Inf multiplier)</li>
+        <li>Multiple reblogs of the same post = multiple positions</li>
+      </ul>
+    </div>
+
+    <div class="card" style="margin-bottom:1.5rem;">
+      <h2>Data source</h2>
+      <p>
+        notesdaq uses the public Tumblr API v2 to enumerate every reblog on tracked posts. Share prices are
+        derived by sorting all reblogs chronologically and assigning sequential counts. No real money is involved,
+        no accounts are needed, and no opt-in is required &mdash; all data is from public posts.
+      </p>
+      <p>
+        The crawl is ongoing. Only blogs that have been crawled will show portfolio data. If your blog isn't here yet,
+        it may be in the queue &mdash; check back later.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Why?</h2>
+      <p>Because it's fun. And because every time you reblog a post at 3 notes that later goes to 50,000, you deserve credit for your impeccable taste.</p>
+    </div>
+  </div>
+</Base>
+
+<style>
+  .about {
+    max-width: 700px;
+    margin: 0 auto;
+  }
+  .about h1 {
+    font-size: 2rem;
+    margin-bottom: 1.5rem;
+  }
+  .about h2 {
+    font-size: 1.1rem;
+    margin-bottom: 0.75rem;
+    color: var(--accent);
+  }
+  .about p {
+    line-height: 1.6;
+    margin-bottom: 0.75rem;
+    color: var(--text);
+  }
+  .about ul {
+    margin-left: 1.5rem;
+    line-height: 1.8;
+    color: var(--text);
+  }
+</style>

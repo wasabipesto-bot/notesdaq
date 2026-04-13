@@ -1,0 +1,207 @@
+---
+export const prerender = false;
+import Base from "../../layouts/Base.astro";
+const { id } = Astro.params;
+---
+
+<Base title={`Post ${id} — notesdaq`}>
+  <div id="post-page" data-id={id}>
+    <div class="loading">Loading stock info...</div>
+  </div>
+</Base>
+
+<script>
+  import { api, formatNumber } from "../../lib/api";
+  import { Chart, registerables } from "chart.js";
+  import "chartjs-adapter-date-fns";
+  Chart.register(...registerables);
+
+  const postId = document.getElementById("post-page")!.dataset.id!;
+  const container = document.getElementById("post-page")!;
+
+  async function load() {
+    let data: any;
+    try {
+      data = await api<any>(`/post/${postId}`);
+    } catch {
+      container.innerHTML = `
+        <div style="text-align:center;padding:4rem;">
+          <h2>Post not found</h2>
+          <p style="color:var(--text-dim);margin-top:1rem;">This post hasn't been analyzed yet.</p>
+          <a href="/" style="margin-top:2rem;display:inline-block;">Back to home</a>
+        </div>`;
+      return;
+    }
+
+    const { post, stock } = data;
+    const opSlug = stock.op?.slug && stock.op.slug !== "unknown" ? stock.op.slug : null;
+    const opAvatar = stock.op?.avatar_url;
+    const enumStatus = stock.fully_enumerated
+      ? ""
+      : '<span class="badge badge-pending">still analyzing</span>';
+
+    // Render post content
+    let contentHtml = "";
+    if (post.content_text) {
+      contentHtml = `<div class="post-content">${post.content_text.split("\n").map((l: string) => `<p>${l}</p>`).join("")}</div>`;
+    }
+    if (post.content_media?.length) {
+      contentHtml += post.content_media.map((url: string) => {
+        if (url.match(/\.(jpg|jpeg|png|gif|webp)/i)) {
+          return `<img src="${url}" class="post-media" loading="lazy" />`;
+        }
+        return `<a href="${url}" class="post-media-link" target="_blank">${url}</a>`;
+      }).join("");
+    }
+    if (!contentHtml && post.summary) {
+      contentHtml = `<div class="post-content"><p>${post.summary}</p></div>`;
+    }
+    if (!contentHtml) {
+      contentHtml = `<div class="post-content"><p style="color:var(--text-dim)">No content available. <a href="${post.post_url || `https://tumblr.com`}" target="_blank">View on Tumblr</a></p></div>`;
+    }
+
+    container.innerHTML = `
+      <div class="stock-header">
+        <div class="stock-info">
+          <h1>
+            ${opSlug ? `<a href="/blog/${opSlug}">${opSlug}</a>'s post` : `Post #${postId}`}
+            ${enumStatus}
+          </h1>
+          <div class="stock-meta">
+            Created ${new Date(post.created_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
+            ${post.post_url ? `&middot; <a href="${post.post_url}" target="_blank">View on Tumblr</a>` : ""}
+          </div>
+        </div>
+      </div>
+
+      <div class="card-grid" style="margin-bottom:1.5rem;">
+        <div class="card">
+          <div class="stat-label">Current Price</div>
+          <div class="stat-value">${formatNumber(stock.current_price)}</div>
+          <div class="stat-sub">reblogs</div>
+        </div>
+        <div class="card">
+          <div class="stat-label">Investors</div>
+          <div class="stat-value">${formatNumber(stock.total_investors)}</div>
+        </div>
+        <div class="card">
+          <div class="stat-label">Likes</div>
+          <div class="stat-value">${formatNumber(stock.total_likes)}</div>
+        </div>
+        <div class="card">
+          <div class="stat-label">Total Notes</div>
+          <div class="stat-value">${formatNumber(post.note_count || (stock.current_price + stock.total_likes))}</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:1.5rem;">
+        <div class="stat-label">Price History</div>
+        <canvas id="price-chart"></canvas>
+        <div id="price-chart-empty" class="chart-empty" style="display:none;">No price data yet</div>
+      </div>
+
+      ${contentHtml ? `
+        <div class="card">
+          <div class="stat-label">Post Content</div>
+          ${contentHtml}
+        </div>
+      ` : ""}
+    `;
+
+    loadPriceChart(postId);
+  }
+
+  async function loadPriceChart(postId: string) {
+    try {
+      const points = await api<{ t: string; price: number }[]>(`/post/${postId}/chart`);
+      const canvas = document.getElementById("price-chart") as HTMLCanvasElement;
+      if (points.length < 2) {
+        canvas.style.display = "none";
+        document.getElementById("price-chart-empty")!.style.display = "block";
+        return;
+      }
+      new Chart(canvas, {
+        type: "line",
+        data: {
+          datasets: [{
+            data: points.map(p => ({ x: new Date(p.t).getTime(), y: p.price })),
+            borderColor: "#00b894",
+            backgroundColor: "rgba(0, 184, 148, 0.08)",
+            fill: true,
+            pointRadius: 0,
+            borderWidth: 2,
+            tension: 0.3,
+          }],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { type: "time", grid: { color: "#2a2a3a" }, ticks: { color: "#8888a0", font: { size: 10 } } },
+            y: { title: { display: true, text: "Reblogs", color: "#8888a0" }, grid: { color: "#2a2a3a" }, ticks: { color: "#8888a0", font: { size: 10 } } },
+          },
+        },
+      });
+    } catch {}
+  }
+
+  load();
+</script>
+
+<style>
+  .stock-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .stock-info h1 {
+    font-size: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .stock-meta {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+  }
+  .stat-sub {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-top: 0.15rem;
+  }
+  .badge {
+    font-size: 0.65rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    background: var(--border);
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+  .badge-pending { background: rgba(253, 203, 110, 0.2); color: var(--yellow); }
+  .chart-empty {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.875rem;
+  }
+
+  .post-content {
+    margin-top: 1rem;
+    line-height: 1.6;
+    color: var(--text);
+  }
+  .post-content p { margin-bottom: 0.75rem; }
+  .post-media {
+    max-width: 100%;
+    border-radius: 8px;
+    margin-top: 0.75rem;
+  }
+  .post-media-link {
+    display: block;
+    margin-top: 0.5rem;
+    word-break: break-all;
+    font-size: 0.85rem;
+  }
+</style>
