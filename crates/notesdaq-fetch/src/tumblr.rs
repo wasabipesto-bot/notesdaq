@@ -81,21 +81,21 @@ impl TumblrClient {
         // Check rate limits
         let rate_limit = parse_rate_limits(&headers);
         if let Some(remaining) = rate_limit.hourly_remaining {
-            if remaining < 50 {
+            if remaining < 25 {
                 let reset = rate_limit.hourly_reset_secs.unwrap_or(3600);
                 warn!(
                     "Rate limit nearly exhausted: {remaining} calls remaining, resets in {reset}s"
                 );
-                if remaining < 10 {
+                if remaining < 20 {
                     info!("Pausing for {reset}s to respect rate limits...");
                     tokio::time::sleep(Duration::from_secs(reset as u64)).await;
                 }
             }
         }
         if let Some(remaining) = rate_limit.daily_remaining {
-            if remaining < 100 {
+            if remaining < 25 {
                 warn!("Daily rate limit nearly exhausted: {remaining} calls remaining");
-                if remaining < 10 {
+                if remaining < 20 {
                     let reset = rate_limit.daily_reset_secs.unwrap_or(86400);
                     info!("Daily limit critical. Pausing for {reset}s...");
                     tokio::time::sleep(Duration::from_secs(reset as u64)).await;

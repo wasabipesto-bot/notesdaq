@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/notesdaq-db", "crates/notesdaq-fetch"]
+members = ["crates/notesdaq-db", "crates/notesdaq-fetch", "crates/notesdaq-api"]
 
 [workspace.dependencies]
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "uuid"] }
